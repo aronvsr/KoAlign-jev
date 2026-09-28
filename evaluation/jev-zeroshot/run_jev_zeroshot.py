@@ -1,4 +1,4 @@
-"""Zero-shot evaluation of TypeSafe Jev on dataset/koalign/valid.{freeform,yesno}.tsv.
+"""Zero-shot evaluation of TypeSafe Jev on dataset/koalign/{valid,test}.{freeform,yesno}.tsv.
 
 Jev returns a typed label with probabilities, so off-list labels are impossible.
 Each item is one Choice question (state={"situation": ...}, criteria = label set);
@@ -12,7 +12,7 @@ Usage:
   python evaluation/jev-zeroshot/run_jev_zeroshot.py --mode freeform
   python evaluation/jev-zeroshot/run_jev_zeroshot.py --mode yesno --dry-run --limit 20
 
-Results are appended to predictions.<mode>.jsonl (resumable: finished rows are skipped).
+Results are appended to predictions.<mode>.jsonl (test: predictions.test.<mode>.jsonl) (resumable: finished rows are skipped).
 """
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ CLASS_RE = re.compile(r"<분류>(-?\d)</분류>")
 INPUT_PREFIX = "[도덕_문장]: "
 
 
-def load(mode: str):
-    path = ROOT / "dataset" / "koalign" / f"valid.{mode}.tsv"
+def load(mode: str, split: str = "valid"):
+    path = ROOT / "dataset" / "koalign" / f"{split}.{mode}.tsv"
     with path.open(encoding="utf-8") as f:
         for i, row in enumerate(csv.DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE)):
             situation = row["inputs"].removeprefix(INPUT_PREFIX)
@@ -90,6 +90,7 @@ def call_dry(instruction, situation, labels, model):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["freeform", "yesno"], required=True)
+    ap.add_argument("--split", choices=["valid", "test"], default="valid")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default="jev-latest", help="TypeSafe model name")
     ap.add_argument("--dry-run", action="store_true", help="random mock instead of the API")
@@ -99,7 +100,7 @@ def main():
         sys.exit("TYPESAFE_API_KEY is not set")
     call = call_dry if args.dry_run else call_jev
 
-    out = OUT_DIR / f"predictions.{args.mode}{'.dryrun' if args.dry_run else ''}.jsonl"
+    out = OUT_DIR / f"predictions.{'' if args.split == 'valid' else args.split + '.'}{args.mode}{'.dryrun' if args.dry_run else ''}.jsonl"
     done = {}
     if out.exists():
         for line in out.read_text(encoding="utf-8").splitlines():
@@ -109,7 +110,7 @@ def main():
 
     labels = list(LABELS[args.mode].values())
     with out.open("a", encoding="utf-8") as f:
-        for n, (idx, situation, gold) in enumerate(load(args.mode)):
+        for n, (idx, situation, gold) in enumerate(load(args.mode, args.split)):
             if args.limit is not None and n >= args.limit:
                 break
             if idx in done:
@@ -133,7 +134,7 @@ def main():
     ok = [r for r in rows if r["error"] is None]
     correct = sum(r["pred"] == r["gold"] for r in ok)
     print("served models:", dict(Counter(r.get("model") for r in ok)))
-    print(f"mode={args.mode} n={len(rows)} api_errors={len(rows) - len(ok)}")
+    print(f"split={args.split} mode={args.mode} n={len(rows)} api_errors={len(rows) - len(ok)}")
     print(f"acc_all={correct / max(len(rows), 1):.4f}  acc_answered={correct / max(len(ok), 1):.4f}")
     # C2/C3 as in final_scoring_logic.py: over all rows, errors count wrong;
     # C2 collapses to positive (>=0) vs negative (<0).
