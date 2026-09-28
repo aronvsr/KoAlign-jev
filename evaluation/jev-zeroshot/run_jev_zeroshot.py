@@ -135,6 +135,12 @@ def main():
     print("served models:", dict(Counter(r.get("model") for r in ok)))
     print(f"mode={args.mode} n={len(rows)} api_errors={len(rows) - len(ok)}")
     print(f"acc_all={correct / max(len(rows), 1):.4f}  acc_answered={correct / max(len(ok), 1):.4f}")
+    # C2/C3 as in final_scoring_logic.py: over all rows, errors count wrong;
+    # C2 collapses to positive (>=0) vs negative (<0).
+    cls = {label: int(k) for k, label in LABELS[args.mode].items()}
+    n = max(len(rows), 1)
+    c2 = sum(r["error"] is None and (cls[r["pred"]] >= 0) == (cls[r["gold"]] >= 0) for r in rows) / n
+    print(f"C2={c2:.4f}" + (f"  C3={correct / n:.4f}" if args.mode == "freeform" else ""))
     print("pred dist:", dict(Counter(r["pred"] for r in ok)))
     print("gold dist:", dict(Counter(r["gold"] for r in rows)))
 

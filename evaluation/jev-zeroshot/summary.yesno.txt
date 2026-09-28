@@ -1,5 +1,6 @@
 served models: {'jev-1.13.0': 672}
 mode=yesno n=672 api_errors=0
 acc_all=0.9405  acc_answered=0.9405
+C2=0.9405
 pred dist: {'동의하지 않음': 313, '동의': 359}
 gold dist: {'동의하지 않음': 333, '동의': 339}
