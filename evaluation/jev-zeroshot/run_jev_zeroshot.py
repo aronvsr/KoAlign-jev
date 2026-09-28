@@ -1,10 +1,12 @@
 """Zero-shot evaluation of TypeSafe Jev on dataset/koalign/valid.{freeform,yesno}.tsv.
 
 Jev returns a typed label with probabilities, so off-list labels are impossible.
-The argmax label is used as the prediction. API errors are logged and reported
+Each item is one Choice question (state={"situation": ...}, criteria = label set);
+the returned `choice` (highest-probability label) is the prediction. API errors are logged and reported
 separately (and counted as wrong in `acc_all`).
 
 Usage:
+  pip install typesafe-sdk
   export TYPESAFE_API_KEY=...
   python evaluation/jev-zeroshot/run_jev_zeroshot.py --mode yesno
   python evaluation/jev-zeroshot/run_jev_zeroshot.py --mode freeform
@@ -54,35 +56,46 @@ def load(mode: str):
             yield i, situation, gold
 
 
-def call_jev(instruction: str, text: str, labels: list[str], api_key: str) -> tuple[str, dict[str, float]]:
-    """Send one decision to Jev. Returns (predicted_label, {label: probability}).
+_client = None
 
-    TODO: fill in from the TypeSafe API reference (endpoint, auth header, request
-    and response shape). Keep temperature/sampling deterministic if the API exposes it,
-    and record the model version in MODEL_ID below.
+
+def call_jev(instruction: str, situation: str, labels: list[str], model: str):
+    """One System One request: a Choice question over the label set.
+
+    Returns (predicted_label, {label: probability}, served_model_name).
     """
-    raise NotImplementedError("Jev API call not wired yet — see TODO in call_jev().")
+    global _client
+    from typesafe_sdk import Choice, TypeSafeClient  # pip install typesafe-sdk
+
+    if _client is None:
+        _client = TypeSafeClient(model=model, timeout=30.0)  # key from TYPESAFE_API_KEY
+    resp = _client.system_one(
+        state={"situation": situation},
+        questions={"judgment": Choice(
+            instructions=instruction,
+            criteria={label: None for label in labels},
+        )},
+    )
+    ans = resp.choices["judgment"]
+    return ans.choice, dict(ans.probabilities), resp.model
 
 
-MODEL_ID = "jev"  # TODO: set to the exact model/version string the API reports
-
-
-def call_dry(instruction, text, labels, api_key):
+def call_dry(instruction, situation, labels, model):
     p = [random.random() for _ in labels]
     s = sum(p)
     probs = {l: x / s for l, x in zip(labels, p)}
-    return max(probs, key=probs.get), probs
+    return max(probs, key=probs.get), probs, "dry-run"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["freeform", "yesno"], required=True)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--model", default="jev-latest", help="TypeSafe model name")
     ap.add_argument("--dry-run", action="store_true", help="random mock instead of the API")
     args = ap.parse_args()
 
-    api_key = os.environ.get("TYPESAFE_API_KEY", "")
-    if not args.dry_run and not api_key:
+    if not args.dry_run and not os.environ.get("TYPESAFE_API_KEY", "").strip():
         sys.exit("TYPESAFE_API_KEY is not set")
     call = call_dry if args.dry_run else call_jev
 
@@ -101,12 +114,10 @@ def main():
                 break
             if idx in done:
                 continue
-            rec = {"idx": idx, "situation": situation, "gold": gold, "model": MODEL_ID}
+            rec = {"idx": idx, "situation": situation, "gold": gold, "requested_model": args.model}
             try:
-                pred, probs = call(SYSTEM[args.mode], f"상황: {situation}", labels, api_key)
-                rec.update(pred=pred, probs=probs, error=None)
-            except NotImplementedError:
-                raise
+                pred, probs, served = call(SYSTEM[args.mode], situation, labels, args.model)
+                rec.update(pred=pred, probs=probs, model=served, error=None)
             except Exception as e:  # network / API error: log, keep going
                 rec.update(pred=None, probs=None, error=repr(e))
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -121,6 +132,7 @@ def main():
     rows = [r for r in latest.values() if args.limit is None or r["idx"] < args.limit]
     ok = [r for r in rows if r["error"] is None]
     correct = sum(r["pred"] == r["gold"] for r in ok)
+    print("served models:", dict(Counter(r.get("model") for r in ok)))
     print(f"mode={args.mode} n={len(rows)} api_errors={len(rows) - len(ok)}")
     print(f"acc_all={correct / max(len(rows), 1):.4f}  acc_answered={correct / max(len(ok), 1):.4f}")
     print("pred dist:", dict(Counter(r["pred"] for r in ok)))
