@@ -1,0 +1,6 @@
+served models: {'jev-1.13.0': 1380}
+split=test mode=freeform n=1380 api_errors=0
+acc_all=0.7188  acc_answered=0.7188
+C2=0.8543  C3=0.7188
+pred dist: {'좋음': 775, '나쁨': 515, '중립': 90}
+gold dist: {'좋음': 740, '중립': 268, '나쁨': 372}
